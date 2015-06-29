@@ -1623,10 +1623,13 @@ static jl_value_t *static_constant_instance(Constant *constant, jl_value_t *jt)
     size_t nargs = 0;
     ConstantStruct *cst = NULL;
     ConstantVector *cvec = NULL;
+    ConstantArray *carr = NULL;
     if ((cst = dyn_cast<ConstantStruct>(constant)) != NULL)
         nargs = cst->getType()->getNumElements();
     else if ((cvec = dyn_cast<ConstantVector>(constant)) != NULL)
         nargs = cvec->getType()->getNumElements();
+    else if ((carr = dyn_cast<ConstantArray>(constant)) != NULL)
+        nargs = carr->getType()->getNumElements();
     else
         assert(false && "Cannot process this type of constant");
 
