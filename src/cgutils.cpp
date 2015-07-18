@@ -1340,7 +1340,7 @@ static jl_cgval_t emit_getfield_knownidx(const jl_cgval_t &strct, unsigned idx, 
 #       ifdef LLVM37
         Value *addr = builder.CreateConstInBoundsGEP2_32(
             cast<PointerType>(strct.V->getType()->getScalarType())->getElementType(),
-            strct, 0, idx);
+            strct.V, 0, idx);
 #       else
         Value *addr = builder.CreateConstInBoundsGEP2_32(strct.V, 0, idx);
 #       endif
