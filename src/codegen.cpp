@@ -4041,10 +4041,10 @@ static Function *emit_function(jl_lambda_info_t *lam)
     DIBuilder dbuilder(*m);
     ctx.dbuilder = &dbuilder;
 #ifdef LLVM37
-    DIFile *fil = NULL;
+    DIFile *topfil = NULL;
     DISubprogram *SP;
 #else
-    DIFile fil;
+    DIFile topfil;
     DISubprogram SP;
 #endif
 
@@ -4097,13 +4097,13 @@ static Function *emit_function(jl_lambda_info_t *lam)
                 ditypes.push_back(julia_type_to_di(jl_tparam(lam->specTypes,i),ctx.dbuilder,false));
             }
 #ifdef LLVM36
-            subrty = ctx.dbuilder->createSubroutineType(fil,ctx.dbuilder->getOrCreateTypeArray(ditypes));
+            subrty = ctx.dbuilder->createSubroutineType(topfil,ctx.dbuilder->getOrCreateTypeArray(ditypes));
 #else
-            subrty = ctx.dbuilder->createSubroutineType(fil,ctx.dbuilder->getOrCreateArray(ditypes));
+            subrty = ctx.dbuilder->createSubroutineType(topfil,ctx.dbuilder->getOrCreateArray(ditypes));
 #endif
         }
 
-        fil = dbuilder.createFile(filename, ".");
+        topfil = dbuilder.createFile(filename, ".");
         #ifndef LLVM34
         SP = dbuilder.createFunction((DIDescriptor)dbuilder.getCU(),
         #else
@@ -4111,7 +4111,7 @@ static Function *emit_function(jl_lambda_info_t *lam)
         #endif
                                     dbgFuncName,  // Name
                                     f->getName(), // LinkageName
-                                    fil,          // File
+                                    topfil,       // File
                                     0,            // LineNo
                                     subrty,       // Ty
                                     false,        // isLocalToUnit
@@ -4146,7 +4146,7 @@ static Function *emit_function(jl_lambda_info_t *lam)
                 llvm::dwarf::DW_TAG_arg_variable,    // Tag
                 SP,         // Scope (current function will be fill in later)
                 argname->name,    // Variable name
-                fil,                    // File
+                topfil,                    // File
                 ctx.lineno == -1 ? 0 : ctx.lineno,             // Line (for now, use lineno of the function)
                 julia_type_to_di(varinfo.declType,ctx.dbuilder,specsig), // Variable type
                 false,                  // May be optimized out
@@ -4160,11 +4160,10 @@ static Function *emit_function(jl_lambda_info_t *lam)
                 SP,                     // Scope (current function will be fill in later)
                 ctx.vaName->name,       // Variable name
                 nreq + 1,               // Argument number (1-based)
-                fil,                    // File
+                topfil,                    // File
                 ctx.lineno == -1 ? 0 : ctx.lineno,             // Line (for now, use lineno of the function)
                 julia_type_to_di(ctx.vars[ctx.vaName].declType,ctx.dbuilder,false));
 #else
-
             ctx.vars[ctx.vaName].dinfo = ctx.dbuilder->createLocalVariable(
                 llvm::dwarf::DW_TAG_arg_variable,   // Tag
                 SP,                                 // Scope (current function will be fill in later)
@@ -4190,7 +4189,7 @@ static Function *emit_function(jl_lambda_info_t *lam)
 #endif
                 SP,                     // Scope (current function will be fill in later)
                 s->name,                // Variable name
-                fil,                    // File
+                topfil,                 // File
                 ctx.lineno == -1 ? 0 : ctx.lineno, // Line (for now, use lineno of the function)
                 julia_type_to_di(varinfo.declType,ctx.dbuilder,specsig), // Variable type
                 false,                  // May be optimized out
@@ -4214,7 +4213,7 @@ static Function *emit_function(jl_lambda_info_t *lam)
 #endif
                 SP,                     // Scope (current function will be filled in later)
                 vname->name,            // Variable name
-                fil,                    // File
+                topfil,                 // File
                 ctx.lineno == -1 ? 0 : ctx.lineno, // Line (for now, use lineno of the function)
                 julia_type_to_di(varinfo.declType,ctx.dbuilder,specsig), // Variable type
                 false,                  // May be optimized out
@@ -4540,6 +4539,7 @@ static Function *emit_function(jl_lambda_info_t *lam)
     int prevlno = -1;
     for(i=0; i < stmtslen; i++) {
         jl_value_t *stmt = jl_cellref(stmts,i);
+        /*
         if (jl_is_linenode(stmt)) {
             lno = jl_linenode_line(stmt);
             if (ctx.debug_enabled)
@@ -4548,7 +4548,9 @@ static Function *emit_function(jl_lambda_info_t *lam)
                 coverageVisitLine(filename, lno);
             ctx.lineno = lno;
         }
-        else if (jl_is_expr(stmt) && ((jl_expr_t*)stmt)->head == line_sym) {
+        */
+        if (jl_is_expr(stmt) && ((jl_expr_t*)stmt)->head == line_sym) {
+            // get the file and line number associated with this :line
             lno = jl_unbox_long(jl_exprarg(stmt, 0));
             #ifdef LLVM37
             DIFile *dfil = NULL;
@@ -4579,22 +4581,29 @@ static Function *emit_function(jl_lambda_info_t *lam)
                     }
                 }
             }
+            // emit debug information
+            DebugLoc loc;
+            MDNode *funcscope = (MDNode*)dbuilder.createLexicalBlockFile(SP,topfil);
             if (ctx.debug_enabled) {
                 MDNode *scope;
-                if (dfil == NULL)
-                    scope = SP;
-                else {
+                if (dfil == topfil || dfil == NULL) {
+                    loc = DebugLoc::get(lno, 1, SP, NULL);
+                    // update top-level line number
+                    ctx.lineno = lno;
+                } else {
 #ifdef LLVM37
                     scope = (MDNode*)dbuilder.createLexicalBlockFile(SP,dfil);
 #else
                     scope = (MDNode*)dbuilder.createLexicalBlockFile(SP,DIFile(dfil));
 #endif
+                    // inlining against toplevel location
+                    MDNode *inlineLocMd = DebugLoc::get(ctx.lineno, 1, funcscope, NULL).getAsMDNode(jl_LLVMContext);
+                    loc = DebugLoc::get(lno, 1, scope, inlineLocMd);
                 }
-                builder.SetCurrentDebugLocation(DebugLoc::get(lno, 1, scope, NULL));
+                builder.SetCurrentDebugLocation(loc);
             }
             if (do_coverage)
                 coverageVisitLine(filename, lno);
-            ctx.lineno = lno;
         }
         if (jl_is_labelnode(stmt)) {
             if (prevlabel) continue;
