@@ -99,17 +99,19 @@ immutable LineInfo
     func::ByteString
     file::ByteString
     line::Int
+    inlined_file::ByteString
+    inlined_line::Int
     fromC::Bool
     ip::Int64 # large enough that this struct can be losslessly read on any machine (32 or 64 bit)
 end
 
-const UNKNOWN = LineInfo("?", "?", -1, true, 0)
+const UNKNOWN = LineInfo("?", "?", -1, "?", -1, true, 0)
 
 #
 # If the LineInfo has function and line information, we consider two of them the same
 # if they share the same function/line information. For unknown functions, line==ip
 # so we never actually need to consider the .ip field.
-#
+# 
 ==(a::LineInfo, b::LineInfo) = a.line == b.line && a.fromC == b.fromC && a.func == b.func && a.file == b.file
 
 function hash(li::LineInfo, h::UInt)
@@ -134,8 +136,8 @@ maxlen_data() = convert(Int, ccall(:jl_profile_maxlen_data, Csize_t, ()))
 
 function lookup(ip::Ptr{Void})
     info = ccall(:jl_lookup_code_address, Any, (Ptr{Void},Cint), ip, false)
-    if length(info) == 5
-        return LineInfo(string(info[1]), string(info[2]), Int(info[3]), info[4], Int64(info[5]))
+    if length(info) == 7 
+        return LineInfo(string(info[1]), string(info[2]), Int(info[3]), string(info[4]), Int(info[5]), info[6], Int64(info[7]))
     else
         return UNKNOWN
     end

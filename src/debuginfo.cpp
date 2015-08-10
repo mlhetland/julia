@@ -462,10 +462,12 @@ void RegisterJuliaJITEventListener() {
 
 // *name and *filename are either NULL or malloc'd pointers
 void lookup_pointer(DIContext *context, char **name, size_t *line,
-                    char **filename, size_t pointer, int demangle,
-                    int *fromC)
+                    char **filename, size_t *inlined_line,
+                    char **inlined_file, size_t pointer,
+                    int demangle, int *fromC)
 {
-    DILineInfo info;
+    DILineInfo info, topinfo;
+    DIInliningInfo inlineinfo;
     if (demangle && *name != NULL) {
         char *oldname = *name;
         *name = jl_demangle(*name);
@@ -474,13 +476,19 @@ void lookup_pointer(DIContext *context, char **name, size_t *line,
 #ifdef LLVM35
     DILineInfoSpecifier infoSpec(DILineInfoSpecifier::FileLineInfoKind::AbsoluteFilePath,
                                  DILineInfoSpecifier::FunctionNameKind::ShortName);
+    DILineInfoSpecifier inlineSpec(DILineInfoSpecifier::FileLineInfoKind::AbsoluteFilePath,
+                                 DILineInfoSpecifier::FunctionNameKind::ShortName);
 #else
     int infoSpec = DILineInfoSpecifier::FileLineInfo |
+                   DILineInfoSpecifier::AbsoluteFilePath |
+                   DILineInfoSpecifier::FunctionName;
+    int inlineSpec = DILineInfoSpecifier::FileLineInfo |
                    DILineInfoSpecifier::AbsoluteFilePath |
                    DILineInfoSpecifier::FunctionName;
 #endif
     if (context == NULL) goto done;
     info = context->getLineInfoForAddress(pointer, infoSpec);
+    inlineinfo = context->getInliningInfoForAddress(pointer, inlineSpec);
 #ifndef LLVM35 // LLVM <= 3.4
     if (strcmp(info.getFunctionName(), "<invalid>") == 0) goto done;
     if (demangle) {
@@ -491,6 +499,13 @@ void lookup_pointer(DIContext *context, char **name, size_t *line,
     }
     *line = info.getLine();
     jl_copy_str(filename, info.getFileName());
+
+    if (inlineinfo.getNumberOfFrames() > 1) {
+        topinfo = inlineinfo.getFrame(inlineinfo.getNumberOfFrames() - 1);
+        if (strcmp(topinfo.getFunctionName(), "<invalid>") == 0) goto done;
+        jl_copy_str(inlined_file, topinfo.getFileName());
+        *inlined_line = topinfo.getLine();
+    }
 #else
     if (strcmp(info.FunctionName.c_str(), "<invalid>") == 0) goto done;
     jl_copy_str(name, info.FunctionName.c_str());
@@ -559,8 +574,9 @@ bool getObjUUID(llvm::object::MachOObjectFile *obj, uint8_t uuid[16])
 extern "C" uint64_t jl_sysimage_base;
 
 // *name and *filename should be either NULL or malloc'd pointer
-void jl_getDylibFunctionInfo(char **name, size_t *line, char **filename,
-                             size_t pointer, int *fromC, int skipC)
+void jl_getDylibFunctionInfo(char **name, char **filename, size_t *line,
+                             char** inlined_file, size_t *inlined_line,
+                             size_t pointer, int *fromC, int skipC, int skipInline)
 {
 #ifdef _OS_WINDOWS_
     IMAGEHLP_MODULE64 ModuleInfo;
@@ -757,7 +773,7 @@ void jl_getDylibFunctionInfo(char **name, size_t *line, char **filename,
 #ifdef _OS_DARWIN_
 lookup:
 #endif
-        lookup_pointer(context, name, line, filename, pointer+slide,
+        lookup_pointer(context, name, line, filename, inlined_line, inlined_file, pointer+slide,
                        fbase == jl_sysimage_base, fromC);
     }
     else {
@@ -766,12 +782,15 @@ lookup:
 }
 
 // Set *name and *filename to either NULL or malloc'd string
-void jl_getFunctionInfo(char **name, size_t *line, char **filename,
-                        size_t pointer, int *fromC, int skipC)
+void jl_getFunctionInfo(char **name, char **filename, size_t *line,
+                        char **inlined_file, size_t *inlined_line,
+                        size_t pointer, int *fromC, int skipC, int skipInline)
 {
     *name = NULL;
     *line = -1;
     *filename = NULL;
+    *inlined_file = NULL;
+    *inlined_line = -1;
     *fromC = 0;
 
 #ifdef USE_MCJIT
@@ -801,7 +820,7 @@ void jl_getFunctionInfo(char **name, size_t *line, char **filename,
         DIContext *context = DIContext::getDWARFContext(const_cast<object::ObjectFile*>(it->second.object));
 #endif
 #endif
-        lookup_pointer(context, name, line, filename, pointer, 1, fromC);
+        lookup_pointer(context, name, line, filename, inlined_line, inlined_file, pointer, 1, fromC);
         delete context;
         return;
     }
@@ -863,20 +882,20 @@ void jl_getFunctionInfo(char **name, size_t *line, char **filename,
         }
 
         DILexicalBlockFile locscope = DILexicalBlockFile(prev.Loc.getScope((*it).second.func->getContext()));
-        *filename = locscope.getFilename().data();
+        jl_copy_str(filename, (char*)(uintptr_t)locscope.getFilename().data());
 
-        MDNode *inlinedAt = prev.Loc.getInlinedAt((*it).second.func->getContext());
-        if (inlinedAt) {
+        MDNode *inlinedAt = skipInline ? NULL : prev.Loc.getInlinedAt((*it).second.func->getContext());
+        if ((!skipInline) && (inlinedAt != NULL)) {
             DebugLoc inlineloc = DebugLoc::getFromDILocation(inlinedAt);
             DILexicalBlockFile inlinescope = DILexicalBlockFile(inlineloc.getScope((*it).second.func->getContext()));
-
-            jl_printf(JL_STDERR, "inlined at: %s : %d\n", inlinescope.getFilename().data(), inlineloc.getLine());
+            jl_copy_str(inlined_file, inlinescope.getFilename().data());
+            *inlined_line = inlineloc.getLine();
         }
 
         return;
     }
 #endif // USE_MCJIT
-    jl_getDylibFunctionInfo(name, line, filename, pointer, fromC, skipC);
+    jl_getDylibFunctionInfo(name, filename, line, inlined_file, inlined_line, pointer, fromC, skipC, skipInline);
 }
 
 int jl_get_llvmf_info(uint64_t fptr, uint64_t *symsize, uint64_t *slide,

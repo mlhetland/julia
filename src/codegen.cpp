@@ -4168,7 +4168,7 @@ static Function *emit_function(jl_lambda_info_t *lam)
                 llvm::dwarf::DW_TAG_arg_variable,   // Tag
                 SP,                                 // Scope (current function will be fill in later)
                 ctx.vaName->name,                   // Variable name
-                fil,                                // File
+                topfil,                             // File
                 ctx.lineno == -1 ? 0 : ctx.lineno,  // Line (for now, use lineno of the function)
                 julia_type_to_di(ctx.vars[ctx.vaName].declType,ctx.dbuilder,false),      // Variable type
                 false,                  // May be optimized out
