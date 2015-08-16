@@ -1039,7 +1039,7 @@ static void sweep_malloced_arrays(void)
 }
 
 // Chain the page as a new page for the pool.
-static inline gcval_t *chain_page(pool_t *p, gcpage_t *pg)
+static inline gcval_t *reset_page(pool_t *p, gcpage_t *pg, gcval_t **_beg)
 {
     // Set metadata
     pg->gc_bits = 0;
@@ -1052,12 +1052,22 @@ static inline gcval_t *chain_page(pool_t *p, gcpage_t *pg)
     pg->fl_begin_offset = GC_PAGE_OFFSET;
     pg->fl_end_offset = (char*)end - (char*)beg + GC_PAGE_OFFSET;
 
+    *_beg = beg;
+    return end;
+}
+
+// Chain the page as a new page for the pool.
+static inline gcval_t *chain_page(pool_t *p, gcpage_t *pg)
+{
+    gcval_t *beg;
+    gcval_t *end = reset_page(p, pg, &beg);
+
     // Construct skipping free list
     beg->next = end; // Store upper bound
     end->next = p->cur_ptr;
     p->orig_ptr = p->cur_ptr = beg;
     p->end_ptr = end;
-    return beg;
+    return end;
 }
 
 static NOINLINE void add_page(pool_t *p)
@@ -1368,11 +1378,9 @@ static gcval_t **sweep_page(pool_t *p, gcpage_t *pg, gcval_t **pfl,
             lazy_freed_pages <= default_collect_interval / GC_PAGE_SZ) {
             lazy_freed_pages++;
             if (!page_linked) {
-                chain_page(p, pg);
-                if (prev_pfl == &p->cur_ptr) {
-                    prev_pfl = (gcval_t**)p->end_ptr;
-                }
-                pfl = prev_pfl;
+                gcval_t *beg;
+                gcval_t *end = reset_page(p, pg, &beg);
+                prev_pfl = pfl = chain_free_block(pfl, beg, end);
             }
         }
         else {
