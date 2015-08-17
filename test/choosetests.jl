@@ -1,5 +1,5 @@
 # This file is a part of Julia. License is MIT: http://julialang.org/license
-
+#=
 @doc """
 
 `tests, net_on = choosetests(choices)` selects a set of tests to be
@@ -13,6 +13,7 @@ directories.
 Upon return, `tests` is a vector of fully-expanded test names, and
 `net_on` is true if networking is available (required for some tests).
 """ ->
+=#
 function choosetests(choices = [])
     testnames = [
         "linalg", "core", "keywordargs", "numbers", "printf",

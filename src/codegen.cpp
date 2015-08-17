@@ -4019,22 +4019,7 @@ static Function *emit_function(jl_lambda_info_t *lam)
     // look for initial (line num filename) node
     if (jl_is_linenode(stmt)) {
         lno = jl_linenode_line(stmt);
-    }
-    else if (jl_is_expr(stmt) && ((jl_expr_t*)stmt)->head == line_sym &&
-             jl_array_dim0(((jl_expr_t*)stmt)->args) > 0) {
-        jl_value_t *a1 = jl_exprarg(stmt,0);
-        if (jl_is_long(a1))
-            lno = jl_unbox_long(a1);
-        if (jl_array_dim0(((jl_expr_t*)stmt)->args) > 1) {
-            a1 = jl_exprarg(stmt,1);
-            if (jl_is_symbol(a1))
-                filename = ((jl_sym_t*)a1)->name;
-            if (jl_array_dim0(((jl_expr_t*)stmt)->args) > 2) {
-                a1 = jl_exprarg(stmt,2);
-                if (jl_is_symbol(a1))
-                    dbgFuncName = ((jl_sym_t*)a1)->name;
-            }
-        }
+        filename = jl_linenode_file(stmt)->name;
     }
     ctx.lineno = lno;
 
@@ -4539,46 +4524,30 @@ static Function *emit_function(jl_lambda_info_t *lam)
     int prevlno = -1;
     for(i=0; i < stmtslen; i++) {
         jl_value_t *stmt = jl_cellref(stmts,i);
-        /*
         if (jl_is_linenode(stmt)) {
             lno = jl_linenode_line(stmt);
-            if (ctx.debug_enabled)
-                builder.SetCurrentDebugLocation(DebugLoc::get(lno, 1, (MDNode*)SP, NULL));
-            if (do_coverage)
-                coverageVisitLine(filename, lno);
-            ctx.lineno = lno;
-        }
-        */
-        if (jl_is_expr(stmt) && ((jl_expr_t*)stmt)->head == line_sym) {
-            // get the file and line number associated with this :line
-            lno = jl_unbox_long(jl_exprarg(stmt, 0));
             #ifdef LLVM37
             DIFile *dfil = NULL;
             #else
             MDNode *dfil = NULL;
             #endif
-            if (jl_array_dim0(((jl_expr_t*)stmt)->args) > 1) {
-                jl_value_t *a1 = jl_exprarg(stmt,1);
-                if (jl_is_symbol(a1)) {
-                    jl_sym_t *file = (jl_sym_t*)a1;
-                    // If the string is not empty
-                    if (*file->name != '\0') {
-                        #ifdef LLVM37
-                        std::map<jl_sym_t *, DIFile *>::iterator it = filescopes.find(file);
-                        #else
-                        std::map<jl_sym_t *, MDNode *>::iterator it = filescopes.find(file);
-                        #endif
-                        if (it != filescopes.end()) {
-                            dfil = it->second;
-                        }
-                        else {
-                            #ifdef LLVM37
-                            dfil = filescopes[file] = (DIFile*)dbuilder.createFile(file->name, ".");
-                            #else
-                            dfil = filescopes[file] = (MDNode*)dbuilder.createFile(file->name, ".");
-                            #endif
-                        }
-                    }
+            jl_sym_t *file = jl_linenode_file(stmt);
+            // If the string is not empty
+            if (*file->name != '\0') {
+                #ifdef LLVM37
+                std::map<jl_sym_t *, DIFile *>::iterator it = filescopes.find(file);
+                #else
+                std::map<jl_sym_t *, MDNode *>::iterator it = filescopes.find(file);
+                #endif
+                if (it != filescopes.end()) {
+                    dfil = it->second;
+                }
+                else {
+                    #ifdef LLVM37
+                    dfil = filescopes[file] = (DIFile*)dbuilder.createFile(file->name, ".");
+                    #else
+                    dfil = filescopes[file] = (MDNode*)dbuilder.createFile(file->name, ".");
+                    #endif
                 }
             }
             // emit debug information
