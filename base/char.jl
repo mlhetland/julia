@@ -1,8 +1,20 @@
 # This file is a part of Julia. License is MIT: http://julialang.org/license
 
-convert(::Type{Char}, x::UInt32) = reinterpret(Char, x)
+function convert(::Type{UInt32}, c::Char)
+    u = reinterpret(UInt32, c)
+    u $= ifelse(
+        u <= 0x0000ffff,
+        ifelse(u <= 0x000000ff, 0x00000000, 0x0000c080),
+        ifelse(u <= 0x00ffffff, 0x00e08080, 0xf0808080),
+    )
+    ((u & 0x000000ff) >> 0) $ ((u & 0x0000ff00) >> 2) $
+    ((u & 0x00ff0000) >> 4) $ ((u & 0xff000000) >> 6)
+end
+function convert(::Type{Char}, u::UInt32)
+    
+end
+
 convert(::Type{Char}, x::Number) = Char(UInt32(x))
-convert(::Type{UInt32}, x::Char) = reinterpret(UInt32, x)
 convert{T<:Number}(::Type{T}, x::Char) = convert(T, UInt32(x))
 
 rem{T<:Number}(x::Char, ::Type{T}) = rem(UInt32(x), T)
